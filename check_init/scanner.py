@@ -263,6 +263,12 @@ def scan_file(source: str, filepath: str = "<stdin>", check_members: bool = Fals
             i += 1
             continue
 
+        # Skip CUDA __shared__ declarations (NVCC forbids initializers on shared memory)
+        if "__shared__" in text:
+            brace_depth, paren_depth = _update_depths(text, brace_depth, paren_depth)
+            i += 1
+            continue
+
         # Skip labels
         if _LABEL.match(text):
             i += 1

@@ -146,7 +146,7 @@ class TestEdgeCases:
         source = _read_fixture("edge_cases.cpp")
         result = scan_file(source, "edge_cases.cpp")
         found = _var_names(result)
-        assert "shared_arr" in found
+        assert "shared_arr" not in found  # __shared__ excluded — NVCC forbids initializers
         assert "dev_var" in found
 
     def test_std_types_flagged(self):
@@ -383,9 +383,10 @@ class TestInlineSnippets:
         result = scan_file("#define FOO int x", "test.cpp")
         assert result.findings == []
 
-    def test_cuda_shared_uninit(self):
+    def test_cuda_shared_skipped(self):
+        """__shared__ variables are skipped — NVCC forbids initializers on shared memory."""
         result = scan_file("__shared__ int arr[64];", "test.cpp")
-        assert len(result.findings) == 1
+        assert len(result.findings) == 0
 
     def test_cuda_device_uninit(self):
         result = scan_file("__device__ float x;", "test.cpp")

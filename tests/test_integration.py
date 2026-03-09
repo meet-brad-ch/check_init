@@ -56,8 +56,7 @@ class TestFixtureIntegration:
         found = {f.var_name for f in result.findings}
         # Should be flagged
         expected_flagged = {
-            "shared_arr",
-            "dev_var",  # CUDA
+            "dev_var",  # CUDA (__shared__ is excluded — NVCC forbids initializers)
             "v",
             "s",
             "m",  # std types
