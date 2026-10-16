@@ -5,6 +5,7 @@ from .config import (
     NON_DECL_KEYWORDS,
     SCALAR_TYPES,
     TYPE_MODIFIERS,
+    TYPE_PREFIXES,
     TYPE_QUALIFIERS,
 )
 from .preprocessor import preprocess
@@ -33,8 +34,17 @@ _MACRO_DEF = re.compile(r"^\s*#\s*define\b")
 _STRUCTURED_BINDING = re.compile(r"\bauto\s*\[")
 
 # Class/struct definition (not forward decl)
-# Matches: class Foo, struct Bar, typedef struct {, struct {
-_CLASS_DEF = re.compile(r"^(?:typedef\s+)?(?:template\s*<[^>]*>\s*)?(class|struct)(?:\s+(\w+))?")
+# Matches: class Foo, struct Bar, typedef struct {, struct {, and heads after macro calls such as
+# API_CLASS(Sealed) class EXPORT_API Foo
+_CLASS_DEF = re.compile(
+    r"^(?:[A-Za-z_]\w*\s*\((?:[^()]|\([^()]*\))*\)\s*)*(?:typedef\s+)?(?:template\s*<[^>]*>\s*)?(class|struct)(?:\s+(\w+))?"
+)
+
+# String and character literals (escapes included); their brackets are not code
+_LITERAL = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
+
+# Arithmetic/bitwise operators after a declarator's name: the line is an expression, not a declaration
+_EXPRESSION_OPERATORS = {"*", "/", "%", "+", "-", "<<", ">>", "^", "|", "~", "?", ":"}
 
 # Label pattern: "label:" but not "case X:" or "public:" etc.
 _LABEL = re.compile(r"^\s*\w+\s*:\s*$")
@@ -137,8 +147,16 @@ def _collect_template_args(tokens: list, start: int) -> tuple:
     return None, 0
 
 
+def _strip_literals(text: str) -> str:
+    """Empty the string and character literals, so brackets inside them are not counted."""
+    if '"' not in text and "'" not in text:
+        return text
+    return _LITERAL.sub('""', text)
+
+
 def _update_depths(text: str, brace_depth: int, paren_depth: int) -> tuple:
     """Update brace/paren depth using str.count (much faster than char iteration)."""
+    text = _strip_literals(text)
     open_b = text.count("{")
     close_b = text.count("}")
     open_p = text.count("(")
@@ -232,6 +250,7 @@ def scan_file(source: str, filepath: str = "<stdin>", check_members: bool = Fals
                 combined += " " + lines[j].text.strip()
 
             if "{" in combined:
+                combined = _strip_literals(combined)
                 found_first = False
                 for c in combined:
                     if c == "{":
@@ -292,7 +311,7 @@ def scan_file(source: str, filepath: str = "<stdin>", check_members: bool = Fals
         # Lines without ; that don't need multi-line joining are skipped.
         # Lines starting with non-identifier chars are skipped.
         first_char = text[0]
-        could_be_decl = (first_char.isalpha() or first_char == "_") and (
+        could_be_decl = (first_char.isalpha() or first_char == "_" or text.startswith("::")) and (
             ";" in text or (not text.endswith("{") and not text.endswith("}"))
         )
 
@@ -351,13 +370,9 @@ def scan_file(source: str, filepath: str = "<stdin>", check_members: bool = Fals
             i += 1
             continue
 
-        # Try to parse as variable declaration
-        finding = _try_parse_declaration(full_text, filepath, line.number, in_class)
-        if finding:
-            if in_class and not check_members:
-                pass
-            else:
-                result.findings.append(finding)
+        # Try to parse as variable declaration (one finding per uninitialized declarator)
+        if not in_class or check_members:
+            result.findings.extend(_try_parse_declaration(full_text, filepath, line.number, in_class))
 
         # Update depths and skip consumed lines
         if lines_consumed > 0:
@@ -370,46 +385,65 @@ def scan_file(source: str, filepath: str = "<stdin>", check_members: bool = Fals
     return result
 
 
-def _try_parse_declaration(
-    text: str, filepath: str, line_num: int, in_class: bool
-) -> "Finding | None":
-    """Try to parse text as an uninitialized variable declaration."""
+def _split_declarators(tokens: list) -> list:
+    """Split the tokens after a declaration's type at top-level commas (one list per declarator)."""
+    groups = [[]]
+    depth = 0
+    for t in tokens:
+        if t in ("(", "{"):
+            depth += 1
+        elif t in (")", "}"):
+            depth = max(0, depth - 1)
+        elif t == "," and depth == 0:
+            groups.append([])
+            continue
+        groups[-1].append(t)
+    return groups
+
+
+def _try_parse_declaration(text: str, filepath: str, line_num: int, in_class: bool) -> list:
+    """Parse text as a declaration; returns a finding for each uninitialized declarator (empty if none or not a
+    declaration)."""
     semi_idx = text.find(";")
     if semi_idx < 0:
-        return None
+        return []
     decl = text[:semi_idx].strip()
+    # A global-scope type (::Type name;) parses as the type itself
+    if decl.startswith("::"):
+        decl = decl[2:].lstrip()
 
     if not decl:
-        return None
+        return []
 
     tokens = _tokenize_and_merge(decl)
     if not tokens:
-        return None
+        return []
 
     first = tokens[0]
 
     # Skip non-declaration lines (check base name for scoped identifiers)
     first_base = first.split("::")[-1].split("<")[0] if "::" in first else first.split("<")[0]
     if first_base in NON_DECL_KEYWORDS:
-        return None
+        return []
 
     # Skip if any keyword that makes this not a decl
     if "extern" in tokens or "typedef" in tokens or "using" in tokens:
-        return None
+        return []
 
     # Skip assignments and expressions
-    if _ASSIGNMENT.match(text):
-        return None
+    if _ASSIGNMENT.match(decl):
+        return []
 
-    # Parse: [qualifiers...] type [modifiers...] [*/&/&&...] name [array...] ;
+    # Parse: [qualifiers...] type [modifiers...] declarator [, declarator...] ;
+    #   declarator: [*/&/&&/qualifiers...] name [array...] [initializer]
     idx = 0
 
-    # Consume qualifiers
-    while idx < len(tokens) and tokens[idx] in _ALL_QUALIFIERS:
+    # Consume qualifiers and prefix words (typename)
+    while idx < len(tokens) and (tokens[idx] in _ALL_QUALIFIERS or tokens[idx] in TYPE_PREFIXES):
         idx += 1
 
     if idx >= len(tokens):
-        return None
+        return []
 
     # Expect type — any identifier (possibly scoped/templated)
     type_name = tokens[idx]
@@ -419,10 +453,10 @@ def _try_parse_declaration(
         type_name.split("<")[0].split("::")[-1] if "::" in type_name else type_name.split("<")[0]
     )
     if not _IDENT.match(base_type):
-        return None
+        return []
 
     if base_type in NON_DECL_KEYWORDS:
-        return None
+        return []
 
     idx += 1
 
@@ -432,66 +466,70 @@ def _try_parse_declaration(
         while idx < len(tokens) and tokens[idx] in _ALL_TYPE_WORDS:
             idx += 1
 
-    # Consume pointer/reference markers and post-type qualifiers
-    has_pointer = False
-    while idx < len(tokens) and (tokens[idx] in ("*", "&", "&&") or tokens[idx] in TYPE_QUALIFIERS):
-        if tokens[idx] in ("*", "&", "&&"):
-            has_pointer = True
-        idx += 1
+    findings = []
+    for position, group in enumerate(_split_declarators(tokens[idx:])):
+        g = 0
+        # Pointer/reference markers and post-type qualifiers belong to the declarator
+        has_pointer = False
+        while g < len(group) and (group[g] in ("*", "&", "&&") or group[g] in TYPE_QUALIFIERS):
+            if group[g] in ("*", "&", "&&"):
+                has_pointer = True
+            g += 1
 
-    if idx >= len(tokens):
-        return None
+        if g >= len(group):
+            return []
 
-    # Expect variable name
-    name = tokens[idx]
-    if not _IDENT.match(name):
-        return None
+        # Expect variable name
+        name = group[g]
+        if not _IDENT.match(name) or name in _SKIP_AS_NAME:
+            return []
+        g += 1
 
-    if name in _SKIP_AS_NAME:
-        return None
+        rest = group[g:]
+        # The first declarator followed by ( is a function declaration or a constructor call
+        if position == 0 and rest and rest[0] == "(":
+            if len(_split_declarators(tokens[idx:])) == 1:
+                return []
+            continue
 
-    idx += 1
+        is_array = False
+        initialized = False
+        for t in rest:
+            if t[0] == "[":
+                is_array = True
+            elif t in ("=", "{", "("):
+                initialized = True
+                break
+            elif t in _EXPRESSION_OPERATORS:
+                # Arithmetic/bitwise operator after name — this is an expression, not a declaration
+                # e.g. "width * height * channels;"
+                return []
+        if initialized:
+            continue
 
-    # Check what follows the name
-    is_array = False
-    remaining_tokens = tokens[idx:]
+        if is_array:
+            kind = "array"
+        elif has_pointer:
+            kind = "pointer"
+        elif in_class:
+            kind = "member"
+        else:
+            kind = "local"
 
-    for t in remaining_tokens:
-        if t[0] == "[":
-            is_array = True
-        elif t in ("=", "{", "("):
-            return None  # Has initializer
-        elif t == ",":
-            break
-        elif t in ("*", "/", "%", "+", "-", "<<", ">>", "^", "|", "~", "?", ":"):
-            # Arithmetic/bitwise operator after name — this is an expression, not a declaration
-            # e.g. "width * height * channels;"
-            return None
+        match = re.search(r"" + re.escape(name) + r"", text)
+        col = match.start() + 1 if match else 1
+        snippet = text.strip()
+        if len(snippet) > 120:
+            snippet = snippet[:117] + "..."
 
-    # Function declarations: name followed by (
-    if remaining_tokens and remaining_tokens[0] == "(":
-        return None
-
-    # Determine kind
-    if is_array:
-        kind = "array"
-    elif has_pointer:
-        kind = "pointer"
-    elif in_class:
-        kind = "member"
-    else:
-        kind = "local"
-
-    col = text.find(name) + 1 if name in text else 1
-    snippet = text.strip()
-    if len(snippet) > 120:
-        snippet = snippet[:117] + "..."
-
-    return Finding(
-        file=filepath,
-        line=line_num,
-        column=col,
-        var_name=name,
-        kind=kind,
-        snippet=snippet,
-    )
+        findings.append(
+            Finding(
+                file=filepath,
+                line=line_num,
+                column=col,
+                var_name=name,
+                kind=kind,
+                snippet=snippet,
+            )
+        )
+    return findings

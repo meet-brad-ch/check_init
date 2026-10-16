@@ -26,6 +26,9 @@ TYPE_QUALIFIERS = {"const", "volatile", "static", "register", "thread_local", "m
 
 TYPE_MODIFIERS = {"signed", "unsigned", "long", "short"}
 
+# Words that may precede a type name and are not part of it (typename Base::Type name;)
+TYPE_PREFIXES = {"typename"}
+
 POINTER_MARKERS = {"*", "&", "&&"}
 
 # CUDA qualifiers that precede type declarations

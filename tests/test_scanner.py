@@ -613,3 +613,64 @@ class TestClassScope:
         assert {(f.var_name, f.kind) for f in result.findings} == {("local", "local"), ("member", "member")}
         result = scan_file(source, "test.h")
         assert [f.var_name for f in result.findings] == ["local"]
+
+
+class TestDeclaratorForms:
+    """Declarations the line parser missed: a global-scope type, typename, several declarators, macro class heads."""
+
+    @staticmethod
+    def _found(source, members=False):
+        return [(f.var_name, f.kind) for f in scan_file(source, "test.cpp", check_members=members).findings]
+
+    def test_global_scope_type(self):
+        assert self._found("void f()\n{\n    ::Actor* actor;\n}\n") == [("actor", "pointer")]
+
+    def test_global_scope_assignment_not_flagged(self):
+        assert self._found("void f()\n{\n    ::counter = 5;\n}\n") == []
+
+    def test_typename_prefix(self):
+        assert self._found("void f()\n{\n    typename Base::Result pos;\n}\n") == [("pos", "local")]
+
+    def test_second_declarator_after_initialised_one(self):
+        assert self._found("int32 i = 0, todo;") == [("todo", "local")]
+
+    def test_every_declarator_flagged(self):
+        assert self._found("float pos, prevPos;") == [("pos", "local"), ("prevPos", "local")]
+
+    def test_declarator_kinds(self):
+        assert self._found("int* p, q, r[4];") == [("p", "pointer"), ("q", "local"), ("r", "array")]
+
+    def test_initialised_declarators_not_flagged(self):
+        assert self._found("int a(5), b{}, c = 1;") == []
+        assert self._found("Foo f{1, 2}, g;") == [("g", "local")]
+
+    def test_function_declaration_not_flagged(self):
+        assert self._found("int compute(int a, int b);") == []
+
+    def test_macro_class_head(self):
+        source = (
+            "API_CLASS(Sealed) class FLAXENGINE_API Effect : public Actor\n"
+            "{\n"
+            "    int32 _index;\n"
+            "};\n"
+            "void f()\n"
+            "{\n"
+            "    int x;\n"
+            "}\n"
+        )
+        assert set(self._found(source, members=True)) == {("_index", "member"), ("x", "local")}
+        assert self._found(source) == [("x", "local")]
+
+    def test_brackets_in_string_literals_ignored(self):
+        # Regression: an unbalanced ( inside a string literal left the parenthesis depth open for the rest of the file
+        source = (
+            "void f()\n"
+            "{\n"
+            "    sb.Append(\"SRV(t\");\n"
+            "    sb.Append('(');\n"
+            "    sb.Append(\"{\");\n"
+            "    int count;\n"
+            "}\n"
+            "int after;\n"
+        )
+        assert self._found(source) == [("count", "local"), ("after", "local")]
