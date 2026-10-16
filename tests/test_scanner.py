@@ -674,3 +674,25 @@ class TestDeclaratorForms:
             "int after;\n"
         )
         assert self._found(source) == [("count", "local"), ("after", "local")]
+
+    def test_union_members_are_members(self):
+        # Regression: union scopes were not tracked, so a union's members inside a class counted as locals
+        source = (
+            "struct Mode\n"
+            "{\n"
+            "    union\n"
+            "    {\n"
+            "        DWORD flags;\n"
+            "        DWORD nup;\n"
+            "    } named;\n"
+            "    int after;\n"
+            "};\n"
+            "union Bits\n"
+            "{\n"
+            "    float f;\n"
+            "    int i;\n"
+            "};\n"
+        )
+        assert set(self._found(source, members=True)) == {("flags", "member"), ("nup", "member"), ("after", "member"),
+                                                            ("f", "member"), ("i", "member")}
+        assert self._found(source) == []

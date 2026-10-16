@@ -34,10 +34,10 @@ _MACRO_DEF = re.compile(r"^\s*#\s*define\b")
 _STRUCTURED_BINDING = re.compile(r"\bauto\s*\[")
 
 # Class/struct definition (not forward decl)
-# Matches: class Foo, struct Bar, typedef struct {, struct {, and heads after macro calls such as
+# Matches: class Foo, struct Bar, union U, typedef struct {, struct {, union {, and heads after macro calls such as
 # API_CLASS(Sealed) class EXPORT_API Foo
 _CLASS_DEF = re.compile(
-    r"^(?:[A-Za-z_]\w*\s*\((?:[^()]|\([^()]*\))*\)\s*)*(?:typedef\s+)?(?:template\s*<[^>]*>\s*)?(class|struct)(?:\s+(\w+))?"
+    r"^(?:[A-Za-z_]\w*\s*\((?:[^()]|\([^()]*\))*\)\s*)*(?:typedef\s+)?(?:template\s*<[^>]*>\s*)?(class|struct|union)(?:\s+(\w+))?"
 )
 
 # String and character literals (escapes included); their brackets are not code
