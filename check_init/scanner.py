@@ -198,6 +198,11 @@ def scan_file(source: str, filepath: str = "<stdin>", check_members: bool = Fals
         line = lines[i]
         text = line.text.strip()
 
+        # A class's scope ends once the brace depth is back where it opened: its closing brace was counted by
+        # _update_depths on an earlier line
+        while class_scope_stack and brace_depth <= class_scope_stack[-1]:
+            class_scope_stack.pop()
+
         # Skip empty lines
         if not text:
             i += 1
@@ -280,7 +285,8 @@ def scan_file(source: str, filepath: str = "<stdin>", check_members: bool = Fals
             i += 1
             continue
 
-        in_class = bool(class_scope_stack)
+        # Directly in the class body: a method body inside the class is a deeper scope with locals
+        in_class = bool(class_scope_stack) and brace_depth == class_scope_stack[-1] + 1
 
         # --- Early rejection: skip lines that can't be declarations ---
         # Lines without ; that don't need multi-line joining are skipped.

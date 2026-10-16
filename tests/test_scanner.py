@@ -555,3 +555,61 @@ class TestInlineSnippets:
             f"Expected 0 findings for function decl with attribute, got "
             f"{len(result.findings)}: " + ", ".join(str(f) for f in result.findings)
         )
+
+
+class TestClassScope:
+    """A class's scope ends at its closing brace; method bodies inside it are not class scope."""
+
+    def test_local_after_class_flagged(self):
+        # Regression: the class scope never closed, so every local after the first multi-line class was dropped
+        source = (
+            "struct Header\n"
+            "{\n"
+            "    int Version;\n"
+            "};\n"
+            "\n"
+            "void Load()\n"
+            "{\n"
+            "    int count;\n"
+            "}\n"
+        )
+        result = scan_file(source, "test.cpp")
+        assert [(f.var_name, f.kind) for f in result.findings] == [("count", "local")]
+
+    def test_local_after_class_not_a_member(self):
+        source = "class A\n{\n    int a;\n};\nvoid f()\n{\n    int b;\n}\n"
+        result = scan_file(source, "test.cpp", check_members=True)
+        assert {(f.var_name, f.kind) for f in result.findings} == {("a", "member"), ("b", "local")}
+
+    def test_member_after_nested_class(self):
+        source = (
+            "class Outer\n"
+            "{\n"
+            "    struct Inner\n"
+            "    {\n"
+            "        int inner;\n"
+            "    };\n"
+            "    int outer;\n"
+            "};\n"
+            "int global_uninit;\n"
+        )
+        result = scan_file(source, "test.h", check_members=True)
+        assert {(f.var_name, f.kind) for f in result.findings} == {
+            ("inner", "member"), ("outer", "member"), ("global_uninit", "local")}
+
+    def test_local_in_inline_method_body(self):
+        # Locals inside an inline method body are locals, and members after the body are still members
+        source = (
+            "class A\n"
+            "{\n"
+            "    void f()\n"
+            "    {\n"
+            "        int local;\n"
+            "    }\n"
+            "    int member;\n"
+            "};\n"
+        )
+        result = scan_file(source, "test.h", check_members=True)
+        assert {(f.var_name, f.kind) for f in result.findings} == {("local", "local"), ("member", "member")}
+        result = scan_file(source, "test.h")
+        assert [f.var_name for f in result.findings] == ["local"]
