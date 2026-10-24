@@ -1,7 +1,7 @@
 # check-init
 
 [![CI](https://github.com/meet-brad-ch/check_init/actions/workflows/ci.yml/badge.svg)](https://github.com/meet-brad-ch/check_init/actions/workflows/ci.yml)
-![Python](https://img.shields.io/badge/python-3.8%2B-blue)
+![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![Runtime dependencies](https://img.shields.io/badge/runtime%20dependencies-none-brightgreen)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 

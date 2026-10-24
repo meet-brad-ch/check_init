@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Detect uninitialized C/C++/CUDA variable declarations"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
