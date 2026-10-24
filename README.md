@@ -1,5 +1,10 @@
 # check-init
 
+[![CI](https://github.com/meet-brad-ch/check_init/actions/workflows/ci.yml/badge.svg)](https://github.com/meet-brad-ch/check_init/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.8%2B-blue)
+![Runtime dependencies](https://img.shields.io/badge/runtime%20dependencies-none-brightgreen)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 A fast, zero-dependency static analysis tool that detects uninitialized C/C++/CUDA variable declarations.
 
 Unlike compiler-based tools (clang-tidy), `check-init` uses regex-based parsing and requires no build artifacts or `compile_commands.json`. It scans source files directly and runs in seconds on large codebases.
@@ -107,7 +112,7 @@ JSON (`--json`):
 - name: "Clone check-init"
   uses: actions/checkout@v4
   with:
-    repository: your-org/check-init
+    repository: meet-brad-ch/check_init
     path: check-init-tool
 
 - name: "Install check-init"
